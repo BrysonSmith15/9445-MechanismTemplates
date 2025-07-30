@@ -58,26 +58,24 @@ class Constants:
     )
     INVERSIONS_TO_MASTER: list[bool] = [
         False,
-        False,
-        False,
     ]  # at [0] is master, its value is ignored, all others are whether to invert the motor relative to the master
     MOTOR_TO_SENSOR_RATIO: float = (
         1.0  # the ratio of the motor's rotations to the (remote) sensor's rotations, 1 if just the motor is used
     )
     SENSOR_TO_MECHANISM_RATIO: float = (
-        15.0  # the ratio of the sensor's rotations to the mechanism's rotations
+        1.0  # the ratio of the sensor's rotations to the mechanism's rotations
     )
     BRAKE_ENABLED: bool = (
         True  # whether to set brake as the default neutral mode for the motors
     )
-    CURRENT_LIMIT: amperes = 80  # the stator limit applied to the motors
+    CURRENT_LIMIT: amperes = 40  # the stator limit applied to the motors
     CLOSED_LOOP_CONFIG: Slot0Configs = (
         Slot0Configs()
-        .with_k_p(25.0)
-        .with_k_i(0)
-        .with_k_d(2.0)
-        .with_k_g(0.87)
-        .with_k_s(0)
+        .with_k_p(0.0)
+        .with_k_i(0.0)
+        .with_k_d(0.0)
+        .with_k_g(0.0)
+        .with_k_s(0.0)
         .with_static_feedforward_sign(StaticFeedforwardSignValue.USE_CLOSED_LOOP_SIGN)
         .with_gravity_type(GravityTypeValue.ARM_COSINE)
     )  # configuration for the closed loop control of the arm
@@ -94,12 +92,12 @@ class Constants:
     )
     MOTOR_TYPE: DCMotor = DCMotor.krakenX60(
         1
-    )  # The kind and quantity of motors controlling the system. Used exculsively for simulation
+    )  # The kind and quantity of motors controlling the system. Used exclusively for simulation
 
     LENGTH: meters = inchesToMeters(
-        19
+        30
     )  # the length from the pivot to the end of the arm in meters
-    MOI: float = 0.25  # Moment of intertia in kg*m^2
+    MOI: float = 0.25  # Moment of intertia in kg*m^2. This should come from CAD
     MIN_ANGLE: Rotation2d = Rotation2d.fromDegrees(
         -120
     )  # the minimum angle of the arm. Used for simulation and to limit the arm's setpoints

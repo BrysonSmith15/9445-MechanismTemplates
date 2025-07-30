@@ -5,7 +5,7 @@ from wpimath.filter import SlewRateLimiter
 
 from wpimath.system.plant import DCMotor
 
-from subsystems.arm_1 import Arm1
+from subsystems.arm_1 import Arm1, Constants
 
 from commands.arm1_goto_setpoint_profiled import Arm1GotoSetpointProfiled
 
@@ -13,6 +13,14 @@ from commands.arm1_goto_setpoint_profiled import Arm1GotoSetpointProfiled
 class Robot(TimedRobot):
     def robotInit(self):
         self.arm = Arm1()
+        consts = self.arm.consts
+        consts.MOTOR_IDs = [11]
+        consts.NETTABLE_NAME = "Arm1_2"
+        self.arm2 = Arm1(consts, mech_parent=self.arm.lig)
+        consts = self.arm2.consts
+        consts.MOTOR_IDs = [12]
+        consts.NETTABLE_NAME = "Arm1_3"
+        self.arm3 = Arm1(consts, mech_parent=self.arm2.lig)
         self.going_up = True
         self.limiter = SlewRateLimiter(200)
 
@@ -26,8 +34,17 @@ class Robot(TimedRobot):
                 Arm1GotoSetpointProfiled(self.arm, Rotation2d.fromDegrees(90), 1)
             )
         ).schedule()
+        RepeatCommand(
+            Arm1GotoSetpointProfiled(self.arm2, Rotation2d.fromDegrees(-90), 3).andThen(
+                Arm1GotoSetpointProfiled(self.arm2, Rotation2d.fromDegrees(90), 1)
+            )
+        ).schedule()
+        RepeatCommand(
+            Arm1GotoSetpointProfiled(self.arm3, Rotation2d.fromDegrees(-90), 3).andThen(
+                Arm1GotoSetpointProfiled(self.arm3, Rotation2d.fromDegrees(90), 1)
+            )
+        ).schedule()
         # Arm1GotoSetpointProfiled(self.arm, Rotation2d.fromDegrees(90), 10).schedule()
-        self.arm.nettable.putBoolean("Enable", True)
         return super().teleopInit()
 
     def teleopPeriodic(self):

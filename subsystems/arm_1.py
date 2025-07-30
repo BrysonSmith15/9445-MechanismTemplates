@@ -5,7 +5,13 @@ from ntcore import NetworkTableInstance
 
 from commands2 import Subsystem
 
-from wpilib import RobotBase, SmartDashboard
+from wpilib import (
+    RobotBase,
+    SmartDashboard,
+    Mechanism2d,
+    MechanismLigament2d,
+    MechanismRoot2d,
+)
 from wpilib.simulation import SingleJointedArmSim, RoboRioSim
 
 from wpimath.geometry import Rotation2d
@@ -39,20 +45,32 @@ from phoenix6.signals import (
 
 
 class Constants:
-    START_SETPOINT: Rotation2d = Rotation2d(0)
-    CANBUS: str = ""
-    NETTABLE_NAME: str = "000Arm"
-    MOTOR_IDs: list[int] = [10]
-    MASTER_INVERSION: bool = False
+    START_SETPOINT: Rotation2d = Rotation2d(0)  # the starting angle of the arm
+    CANBUS: str = (
+        ""  # The canbus to be used by ctre products, "" will be "rio1", "canivore1" is a likely canivore bus name, etc
+    )
+    NETTABLE_NAME: str = "000Arm"  # the name to be used for networktables loggin
+    MOTOR_IDs: list[int] = [
+        10
+    ]  # the CAN IDs of each motor, the first is the master, all others are followers
+    MASTER_INVERSION: bool = (
+        False  # whether to invert the master motor, all others will be inverted relative to this. Default is CW Positive
+    )
     INVERSIONS_TO_MASTER: list[bool] = [
         False,
         False,
         False,
-    ]  # at [0] is master, its value is ignored
-    MOTOR_TO_SENSOR_RATIO: float = 1.0
-    SENSOR_TO_MECHANISM_RATIO: float = 15.0
-    BRAKE_ENABLED: bool = True
-    CURRENT_LIMIT: amperes = 80
+    ]  # at [0] is master, its value is ignored, all others are whether to invert the motor relative to the master
+    MOTOR_TO_SENSOR_RATIO: float = (
+        1.0  # the ratio of the motor's rotations to the (remote) sensor's rotations, 1 if just the motor is used
+    )
+    SENSOR_TO_MECHANISM_RATIO: float = (
+        15.0  # the ratio of the sensor's rotations to the mechanism's rotations
+    )
+    BRAKE_ENABLED: bool = (
+        True  # whether to set brake as the default neutral mode for the motors
+    )
+    CURRENT_LIMIT: amperes = 80  # the stator limit applied to the motors
     CLOSED_LOOP_CONFIG: Slot0Configs = (
         Slot0Configs()
         .with_k_p(25.0)
@@ -62,30 +80,56 @@ class Constants:
         .with_k_s(0)
         .with_static_feedforward_sign(StaticFeedforwardSignValue.USE_CLOSED_LOOP_SIGN)
         .with_gravity_type(GravityTypeValue.ARM_COSINE)
+    )  # configuration for the closed loop control of the arm
+    SLOT_1_CONFIG: Slot1Configs | None = (
+        None  # optional configuration for alternate hardware closed loop configurations
     )
-    SLOT_1_CONFIG: Slot1Configs | None = None
-    SLOT_2_CONFIG: Slot2Configs | None = None
-    CANCODER_ID: int | None = None
-    CANCODER_INVERTED: bool | None = True
-    CANCODER_OFFSET_ROTATIONS: float = 0.0
-    # this should include the number of motors in the joint for simulation calculations
-    MOTOR_TYPE: DCMotor = DCMotor.krakenX60(1)
+    SLOT_2_CONFIG: Slot2Configs | None = (
+        None  # optional configuration for alternate hardware closed loop configuration
+    )
+    CANCODER_ID: int | None = None  # ID for a remote cancoder, if used
+    CANCODER_INVERTED: bool | None = True  # whether the cancoder is inverted, if used
+    CANCODER_OFFSET_ROTATIONS: float = (
+        0.0  # the offset of the cancoder in rotations, if used
+    )
+    MOTOR_TYPE: DCMotor = DCMotor.krakenX60(
+        1
+    )  # The kind and quantity of motors controlling the system. Used exculsively for simulation
 
-    LENGTH: meters = inchesToMeters(19)
+    LENGTH: meters = inchesToMeters(
+        19
+    )  # the length from the pivot to the end of the arm in meters
     MOI: float = 0.25  # Moment of intertia in kg*m^2
-    MIN_ANGLE: Rotation2d = Rotation2d.fromDegrees(-120)
-    MAX_ANGLE: Rotation2d = Rotation2d.fromDegrees(120)
+    MIN_ANGLE: Rotation2d = Rotation2d.fromDegrees(
+        -120
+    )  # the minimum angle of the arm. Used for simulation and to limit the arm's setpoints
+    MAX_ANGLE: Rotation2d = Rotation2d.fromDegrees(
+        120
+    )  # the maximum angle of the arm. Used for simulation and to limit the arm's setpoints
 
 
 class Arm1(Subsystem):
+    """
+    A simple single jointed arm subsystem to be configured with the Constants class from the same file
+    Can be composed into a multijointed arm with a seperate subsystem for each joint
+    and vizualized with Mechanism2d by passing parent mechanism to the constructor
+    This has poor sim fidelity as each parent arm does not consider any children arms and their impact on the parent
+    They also do not know the angle of the parent, so will consider gravity very poorly
+    The arm2 and arm3 (TODO) have better sim performance but can be more complicated
+    """
+
     cancoder: CANcoder | None = None
 
     def __init__(
         self,
+        consts: Constants | None = None,
+        *,
+        mech_parent: MechanismRoot2d | MechanismLigament2d | None = None,
         select_slot_1: Callable[[], bool] | None = None,
         select_slot_2: Callable[[], bool] | None = None,
     ):
-        self.consts = Constants()
+        self.consts = consts if consts is not None else Constants()
+        self.setName(self.consts.NETTABLE_NAME)
         self.nettable = NetworkTableInstance.getDefault().getTable(
             self.consts.NETTABLE_NAME
         )
@@ -189,12 +233,28 @@ class Arm1(Subsystem):
                 True,
                 self.get_angle().radians(),
             )
-            self.nettable.putBoolean("Enable", False)
+
+        if mech_parent is None:
+            # this does not current handle if the child is larger than the parent
+            self.mech = Mechanism2d(
+                w := (4.4 * self.consts.LENGTH * 100),
+                h := (4.4 * self.consts.LENGTH * 100),
+            )
+            self.mech_root = self.mech.getRoot("Arm1", w / 2, h / 2)
+            SmartDashboard.putData("Arm1 Mechanism", self.mech)
+        else:
+            self.mech_root = mech_parent
+        self.lig = self.mech_root.appendLigament(
+            "Arm1Ligament", self.consts.LENGTH * 100, self.get_angle().degrees()
+        )
 
         SmartDashboard.putData(self)
         super().__init__()
 
     def periodic(self):
+        """
+        Log data to networktables and update the master motor
+        """
         BaseStatusSignal.refresh_all(
             [self.position_signal_rotations, self.velocity_signal_rotations]
         )
@@ -234,34 +294,45 @@ class Arm1(Subsystem):
                 motor.get_closed_loop_error().value_as_double,
             )
 
+        self.lig.setAngle(self.get_angle().degrees())
+
         return super().periodic()
 
     def simulationPeriodic(self):
-        if self.nettable.getBoolean("Enable", False):
-            self.arm_sim.setInputVoltage(RoboRioSim.getVInVoltage())
-            self.arm_sim.setInput([self.motors[0].get() * RoboRioSim.getVInVoltage()])
-            self.arm_sim.update(0.02)
+        """
+        Update the simulation model.
+        Set the motors and simulate
+        """
+        self.arm_sim.setInputVoltage(RoboRioSim.getVInVoltage())
+        self.arm_sim.setInput([self.motors[0].get() * RoboRioSim.getVInVoltage()])
+        self.arm_sim.update(0.02)
 
-            vel = (
-                self.arm_sim.getVelocity()
-                / (2 * pi)
-                * (
-                    self.consts.SENSOR_TO_MECHANISM_RATIO
-                    * self.consts.MOTOR_TO_SENSOR_RATIO
-                )
+        vel = (
+            self.arm_sim.getVelocity()
+            / (2 * pi)
+            * (
+                self.consts.SENSOR_TO_MECHANISM_RATIO
+                * self.consts.MOTOR_TO_SENSOR_RATIO
             )
-            for motor in self.motors:
-                motor.sim_state.add_rotor_position(vel * 0.02)
-                motor.sim_state.set_rotor_velocity(vel)
+        )
+        for motor in self.motors:
+            motor.sim_state.add_rotor_position(vel * 0.02)
+            motor.sim_state.set_rotor_velocity(vel)
 
-            if self.cancoder:
-                cancoder_vel = vel * self.consts.MOTOR_TO_SENSOR_RATIO
-                self.cancoder.sim_state.add_position(cancoder_vel)
-                self.cancoder.sim_state.set_velocity(cancoder_vel)
+        if self.cancoder:
+            cancoder_vel = vel * self.consts.MOTOR_TO_SENSOR_RATIO
+            self.cancoder.sim_state.add_position(cancoder_vel)
+            self.cancoder.sim_state.set_velocity(cancoder_vel)
+
+        RoboRioSim.setVInCurrent(self.arm_sim.getCurrentDraw())
 
         return super().simulationPeriodic()
 
     def get_angle(self) -> Rotation2d:
+        """
+        Returns the current angle of the end of the arm as a Rotation2d.
+        Considers scaling factors set in Constants
+        """
         if self.cancoder:
             return Rotation2d.fromRotations(
                 self.position_signal_rotations.value_as_double
@@ -271,12 +342,29 @@ class Arm1(Subsystem):
         return Rotation2d.fromRotations(self.position_signal_rotations.value_as_double)
 
     def _set_setpoint(self, setpoint: Rotation2d) -> None:
+        """
+        A (mostly) private method to set the setpoint of the arm.
+        Users should use the set_setpoint method which returns a command
+        This should only be used in advanced cases or nested in a subclassed command
+        """
+        if setpoint.degrees() < self.consts.MIN_ANGLE.degrees():
+            setpoint = self.consts.MIN_ANGLE
+        elif setpoint.degrees() > self.consts.MAX_ANGLE.degrees():
+            setpoint = self.consts.MAX_ANGLE
         self.setpoint = setpoint
 
     def set_setpoint(self, setpoint: Rotation2d) -> Command:
+        """
+        Return a command to set the setpoint of the arm.
+        This is the preferred way to set the setpoint of the arm.
+        The setpoint is clamped to the min and max angles of the arm.
+        """
         return InstantCommand(lambda: self._set_setpoint(setpoint), self).withName(
             f"Set Setpoint to {setpoint.degrees()} degrees"
         )
 
     def get_setpoint(self) -> Rotation2d:
+        """
+        Returns the current setpoint of the arm.
+        """
         return self.setpoint

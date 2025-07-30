@@ -80,10 +80,10 @@ class Constants:
         .with_gravity_type(GravityTypeValue.ARM_COSINE)
     )  # configuration for the closed loop control of the arm
     SLOT_1_CONFIG: Slot1Configs | None = (
-        None  # optional configuration for alternate hardware closed loop configurations
+        None  # optional configuration for alternate hardware closed loop configurations, used for advanced controls based on changing arm properties
     )
     SLOT_2_CONFIG: Slot2Configs | None = (
-        None  # optional configuration for alternate hardware closed loop configuration
+        None  # optional configuration for alternate hardware closed loop configuration, used for advanced controls based on changing arm properties
     )
     CANCODER_ID: int | None = None  # ID for a remote cancoder, if used
     CANCODER_INVERTED: bool | None = True  # whether the cancoder is inverted, if used
@@ -114,6 +114,8 @@ class Arm1(Subsystem):
     This has poor sim fidelity as each parent arm does not consider any children arms and their impact on the parent
     They also do not know the angle of the parent, so will consider gravity very poorly
     The arm2 and arm3 (TODO) have better sim performance but can be more complicated
+
+    Note that if if if slot1 and slot2 exist and both of their selectors are true, the arm will use slot2 for closed loop control
     """
 
     cancoder: CANcoder | None = None
@@ -271,11 +273,17 @@ class Arm1(Subsystem):
         self.nettable.putNumber("Setpoint/Degrees", self.setpoint.degrees())
         self.nettable.putNumber("Setpoint/Radians", self.setpoint.radians())
 
+        slot = 0
+        if self.select_slot_1 is not None:
+            if self.select_slot_1():
+                slot = 1
+        if self.select_slot_2 is not None:
+            if self.select_slot_2():
+                slot = 2
+
         # Work
         self.motors[0].set_control(
-            PositionVoltage(
-                self.setpoint.degrees() / 360  # / self.consts.SENSOR_TO_MECHANISM_RATIO
-            )
+            PositionVoltage(self.setpoint.degrees() / 360, slot=slot)
         )
 
         # Log Outputs

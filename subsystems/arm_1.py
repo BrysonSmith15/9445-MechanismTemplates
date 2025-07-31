@@ -11,6 +11,7 @@ from wpilib import (
     Mechanism2d,
     MechanismLigament2d,
     MechanismRoot2d,
+    Color8Bit,
 )
 from wpilib.simulation import SingleJointedArmSim, RoboRioSim
 
@@ -59,11 +60,8 @@ class Constants:
     INVERSIONS_TO_MASTER: list[bool] = [
         False,
     ]  # at [0] is master, its value is ignored, all others are whether to invert the motor relative to the master
-    MOTOR_TO_SENSOR_RATIO: float = (
-        1.0  # the ratio of the motor's rotations to the (remote) sensor's rotations, 1 if just the motor is used
-    )
     SENSOR_TO_MECHANISM_RATIO: float = (
-        1.0  # the ratio of the sensor's rotations to the mechanism's rotations
+        21.0  # the ratio of the sensor's rotations to the mechanism's rotations
     )
     BRAKE_ENABLED: bool = (
         True  # whether to set brake as the default neutral mode for the motors
@@ -71,7 +69,7 @@ class Constants:
     CURRENT_LIMIT: amperes = 40  # the stator limit applied to the motors
     CLOSED_LOOP_CONFIG: Slot0Configs = (
         Slot0Configs()
-        .with_k_p(0.0)
+        .with_k_p(80.0)
         .with_k_i(0.0)
         .with_k_d(0.0)
         .with_k_g(0.0)
@@ -85,7 +83,7 @@ class Constants:
     SLOT_2_CONFIG: Slot2Configs | None = (
         None  # optional configuration for alternate hardware closed loop configuration, used for advanced controls based on changing arm properties
     )
-    CANCODER_ID: int | None = None  # ID for a remote cancoder, if used
+    CANCODER_ID: int | None = 5  # ID for a remote cancoder, if used
     CANCODER_INVERTED: bool | None = True  # whether the cancoder is inverted, if used
     CANCODER_OFFSET_ROTATIONS: float = (
         0.0  # the offset of the cancoder in rotations, if used
@@ -175,14 +173,11 @@ class Arm1(Subsystem):
                 .with_feedback(
                     FeedbackConfigs()
                     .with_feedback_remote_sensor_id(self.consts.CANCODER_ID)
-                    .with_rotor_to_sensor_ratio(self.consts.MOTOR_TO_SENSOR_RATIO)
                     .with_sensor_to_mechanism_ratio(
                         self.consts.SENSOR_TO_MECHANISM_RATIO
                     )
                     if self.consts.CANCODER_ID and idx == 0
-                    else FeedbackConfigs()
-                    .with_rotor_to_sensor_ratio(self.consts.MOTOR_TO_SENSOR_RATIO)
-                    .with_sensor_to_mechanism_ratio(
+                    else FeedbackConfigs().with_sensor_to_mechanism_ratio(
                         self.consts.SENSOR_TO_MECHANISM_RATIO
                     )
                 )
@@ -224,8 +219,7 @@ class Arm1(Subsystem):
         if RobotBase.isSimulation():
             self.arm_sim = SingleJointedArmSim(
                 self.consts.MOTOR_TYPE,
-                self.consts.MOTOR_TO_SENSOR_RATIO
-                * self.consts.SENSOR_TO_MECHANISM_RATIO,
+                self.consts.SENSOR_TO_MECHANISM_RATIO,
                 self.consts.MOI,
                 self.consts.LENGTH,
                 self.consts.MIN_ANGLE.radians(),
@@ -246,6 +240,27 @@ class Arm1(Subsystem):
             self.mech_root = mech_parent
         self.lig = self.mech_root.appendLigament(
             "Arm1Ligament", self.consts.LENGTH * 100, self.get_angle().degrees()
+        )
+
+        self.setpoint_lig = self.mech_root.appendLigament(
+            "Arm1SetpointLigament",
+            self.consts.LENGTH * 100,
+            self.setpoint.degrees(),
+            color=Color8Bit(0, 0, 255),
+        )
+
+        self._max_lig = self.mech_root.appendLigament(
+            "Arm1MaxAngle",
+            self.consts.LENGTH * 50,
+            self.consts.MAX_ANGLE.degrees(),
+            color=Color8Bit(255, 0, 0),
+        )
+
+        self._min_lig = self.mech_root.appendLigament(
+            "Arm1MinAngle",
+            self.consts.LENGTH * 50,
+            self.consts.MIN_ANGLE.degrees(),
+            color=Color8Bit(0, 255, 0),
         )
 
         SmartDashboard.putData(self)
@@ -316,18 +331,15 @@ class Arm1(Subsystem):
         vel = (
             self.arm_sim.getVelocity()
             / (2 * pi)
-            * (
-                self.consts.SENSOR_TO_MECHANISM_RATIO
-                * self.consts.MOTOR_TO_SENSOR_RATIO
-            )
+            * (self.consts.SENSOR_TO_MECHANISM_RATIO)
         )
         for motor in self.motors:
             motor.sim_state.add_rotor_position(vel * 0.02)
             motor.sim_state.set_rotor_velocity(vel)
 
         if self.cancoder:
-            cancoder_vel = vel * self.consts.MOTOR_TO_SENSOR_RATIO
-            self.cancoder.sim_state.add_position(cancoder_vel)
+            cancoder_vel = vel
+            self.cancoder.sim_state.add_position(cancoder_vel * 0.02)
             self.cancoder.sim_state.set_velocity(cancoder_vel)
 
         RoboRioSim.setVInCurrent(self.arm_sim.getCurrentDraw())
@@ -343,6 +355,8 @@ class Arm1(Subsystem):
             return Rotation2d.fromRotations(
                 self.position_signal_rotations.value_as_double
                 / self.consts.SENSOR_TO_MECHANISM_RATIO
+                # self.cancoder.get_position().value_as_double
+                # / self.consts.SENSOR_TO_MECHANISM_RATIO
             )
 
         return Rotation2d.fromRotations(self.position_signal_rotations.value_as_double)
@@ -358,6 +372,7 @@ class Arm1(Subsystem):
         elif setpoint.degrees() > self.consts.MAX_ANGLE.degrees():
             setpoint = self.consts.MAX_ANGLE
         self.setpoint = setpoint
+        self.setpoint_lig.setAngle(self.setpoint.degrees())
 
     def set_setpoint(self, setpoint: Rotation2d) -> Command:
         """

@@ -1,5 +1,5 @@
 from wpilib import run
-from robot_arm1 import Robot
+from robot_arm2 import Robot
 
 
 class mRobot(Robot): ...
